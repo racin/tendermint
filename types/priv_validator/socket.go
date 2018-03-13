@@ -172,12 +172,12 @@ func (sc *SocketClient) GetPubKey() crypto.PubKey {
 func (sc *SocketClient) PubKey() (crypto.PubKey, error) {
 	err := writeMsg(sc.conn, &PubKeyMsg{})
 	if err != nil {
-		return crypto.PubKey{}, err
+		return crypto.PubKeyEd25519{}, err
 	}
 
 	res, err := readMsg(sc.conn)
 	if err != nil {
-		return crypto.PubKey{}, err
+		return crypto.PubKeyEd25519{}, err
 	}
 
 	return res.(*PubKeyMsg).PubKey, nil
@@ -255,7 +255,7 @@ func (sc *SocketClient) acceptConnection() (net.Conn, error) {
 	}
 
 	if sc.privKey != nil {
-		conn, err = p2pconn.MakeSecretConnection(conn, sc.privKey.Wrap())
+		conn, err = p2pconn.MakeSecretConnection(conn, sc.privKey)
 		if err != nil {
 			return nil, err
 		}
@@ -413,7 +413,7 @@ RETRY_LOOP:
 		}
 
 		if rs.privKey != nil {
-			conn, err = p2pconn.MakeSecretConnection(conn, rs.privKey.Wrap())
+			conn, err = p2pconn.MakeSecretConnection(conn, rs.privKey)
 			if err != nil {
 				rs.Logger.Error(
 					"sc connect",
@@ -513,12 +513,9 @@ type SignHeartbeatMsg struct {
 }
 
 func readMsg(r io.Reader) (PrivValidatorSocketMsg, error) {
-	var (
-		n   int
-		err error
-	)
-
-	read := amino.ReadBinary(struct{ PrivValidatorSocketMsg }{}, r, 0, &n, &err)
+	var read PrivValidatorSocketMsg
+	// TODO: set limit
+	err := amino.UnmarshalBinaryReader(r, &read, 0)
 	if err != nil {
 		if opErr, ok := err.(*net.OpError); ok {
 			return nil, errors.Wrapf(ErrConnTimeout, opErr.Addr.String())
@@ -536,13 +533,12 @@ func readMsg(r io.Reader) (PrivValidatorSocketMsg, error) {
 }
 
 func writeMsg(w io.Writer, msg interface{}) error {
-	var (
-		err error
-		n   int
-	)
-
 	// TODO(xla): This extra wrap should be gone with the sdk-2 update.
-	amino.WriteBinary(struct{ PrivValidatorSocketMsg }{msg}, w, &n, &err)
+	bz, err := amino.MarshalBinary(struct{ PrivValidatorSocketMsg }{msg})
+	if err != nil {
+		return errors.Wrap(err, "failed to marshal private validator socket msg")
+	}
+	_, err = w.Write(bz)
 	if opErr, ok := err.(*net.OpError); ok {
 		return errors.Wrapf(ErrConnTimeout, opErr.Addr.String())
 	}
